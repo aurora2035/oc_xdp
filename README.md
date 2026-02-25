@@ -1,6 +1,6 @@
-# OpenClaw x xDP 导购 Agent 项目
+# oc w/ xdp
 
-这是一个独立项目目录（`Agent/`），目标是把设计的三层架构落到可运行 MVP：
+该项目架构如下：
 
 - Input Layer：text / audio
 - OpenClaw Runtime：使用其运行时推理（NLU/Planner 由模型驱动）
