@@ -1,0 +1,41 @@
+{
+  "agent": {
+    "name": "openclaw-shopping-assistant",
+    "log_level": "INFO"
+  },
+  "memory": {
+    "store_path": "./data/agent_memory.json",
+    "max_history_rounds": 3,
+    "max_product_records": 5
+  },
+  "nlu": {
+    "model": "Qwen2.5-0.5B-Instruct",
+    "optimization": "ipex_llm_int8_amx"
+  },
+  "embedding": {
+    "backend": "transformers",
+    "overrides": {
+      "model": "bge-m3",
+      "device": "cpu",
+      "use_ipex": true,
+      "amp": "int8"
+    }
+  },
+  "xdp": {
+    "asr": {
+      "model_name": "whisper",
+      "model": /data/whisper/whisper-large-v3-fp32-ov,
+      "language": "en",
+      "task": "transcribe",
+      "backend": openvino,
+      "inference_precision": "bf16",
+      "input": "audio_file",
+      "num_runs": 1
+    },
+    "tts": {
+      "tts_model": "cosyvoice2_0.5b",
+      "tts_mode": "zero_shot",
+      "prompt_text": "希望你以后能够做的比我还好呦。"
+    }
+  }
+}
