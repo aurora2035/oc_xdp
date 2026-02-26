@@ -33,6 +33,8 @@ class AgentInput:
     audio_input: Optional[str] = None
     image: Optional[bytes] = None
     response_mode: str = "text"
+    upstream_nlu: Optional[Dict[str, Any]] = None
+    upstream_plan: Optional[List[Dict[str, Any]]] = None
 
 
 @dataclass
@@ -51,6 +53,9 @@ class OpenClawAgent:
         self.config = config
         self.skills: Dict[str, BaseSkill] = {}
         self.planner = Planner()
+        orchestration_cfg = config.get("orchestration", {})
+        self.use_upstream_planner = bool(orchestration_cfg.get("use_upstream_planner", False))
+        self.strict_upstream_plan = bool(orchestration_cfg.get("strict_upstream_plan", False))
 
         memory_cfg = config.get("memory", {})
         self.memory = AgentMemory(
@@ -61,7 +66,7 @@ class OpenClawAgent:
         self.memory.load()
 
         self.register_skill(ASRSkill())
-        self.register_skill(NLUSkill())
+        self.register_skill(NLUSkill(config.get("nlu", {})))
         self.register_skill(RAGSkill(embedding_config=config.get("embedding", {})))
         self.register_skill(GenerationSkill())
         self.register_skill(TTSSkill())
@@ -86,6 +91,29 @@ class OpenClawAgent:
             name = step["skill_name"]
             outputs[name] = await self._run_skill(name, step.get("params", {}))
         return outputs
+
+    def _normalize_upstream_plan(self, upstream_plan: List[Dict[str, Any]], query: str) -> List[Dict[str, Any]]:
+        normalized: List[Dict[str, Any]] = []
+        for item in upstream_plan:
+            if not isinstance(item, dict):
+                continue
+            skill_name = item.get("skill_name")
+            if not isinstance(skill_name, str) or skill_name not in self.skills:
+                continue
+            params = item.get("params")
+            if not isinstance(params, dict):
+                params = {}
+            if "query" not in params and skill_name in {"rag", "generation"}:
+                params = dict(params)
+                params["query"] = query
+            normalized.append(
+                {
+                    "skill_name": skill_name,
+                    "params": params,
+                    "async": bool(item.get("async", False)),
+                }
+            )
+        return normalized
 
     async def process(self, agent_input: AgentInput) -> AgentOutput:
         """Run one end-to-end request through the full pipeline."""
@@ -131,10 +159,49 @@ class OpenClawAgent:
 
         self.memory.add_dialog("user", query)
 
-        # 2. NLU 理解意图
-        nlu = await self._run_skill("nlu", {"query": query, "cv_result": None})
-         # 3. Planner 生成执行计划
-        plan = self.planner.build_plan(nlu, query=query, cv_result=None)
+        # 2. NLU/Planner：可配置为 OpenClaw 上游优先/严格模式
+        upstream_nlu = dict(agent_input.upstream_nlu) if isinstance(agent_input.upstream_nlu, dict) else None
+        upstream_plan = (
+            self._normalize_upstream_plan(agent_input.upstream_plan, query)
+            if isinstance(agent_input.upstream_plan, list)
+            else []
+        )
+
+        if self.use_upstream_planner:
+            if not upstream_plan and self.strict_upstream_plan:
+                raise ValueError("upstream plan required when strict_upstream_plan=true")
+            nlu = upstream_nlu or {
+                "intent": "upstream_managed",
+                "entities": {},
+                "skill_chain": [item["skill_name"] for item in upstream_plan],
+                "confidence": 1.0,
+                "model": {"name": "openclaw-upstream", "backend": "upstream"},
+                "cv_available": False,
+                "fallback": False,
+            }
+            if upstream_plan:
+                plan = upstream_plan
+            else:
+                plan = [
+                    {
+                        "skill_name": "generation",
+                        "params": {
+                            "query": query,
+                            "intent": str(nlu.get("intent", "chitchat")),
+                            "entities": nlu.get("entities", {}) if isinstance(nlu.get("entities"), dict) else {},
+                            "rag_candidates": [],
+                        },
+                        "async": False,
+                    }
+                ]
+        else:
+            if upstream_nlu is not None:
+                nlu = upstream_nlu
+            else:
+                nlu = await self._run_skill("nlu", {"query": query, "cv_result": None})
+            plan = upstream_plan or self.planner.build_plan(nlu, query=query, cv_result=None)
+
+        # 3. Planner 生成执行计划
         # 4. 按顺序执行 skill 链
         chain_outputs = await self._run_plan(plan)
         skill_outputs.update(chain_outputs)

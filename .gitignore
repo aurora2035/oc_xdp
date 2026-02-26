@@ -1,2 +1,12 @@
 __pycache__/
 *.pyc
+
+# OpenClaw local workspace metadata (do not upstream)
+.openclaw/
+AGENTS.md
+BOOTSTRAP.md
+HEARTBEAT.md
+IDENTITY.md
+SOUL.md
+TOOLS.md
+USER.md

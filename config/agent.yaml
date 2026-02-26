@@ -8,9 +8,16 @@
     "max_history_rounds": 3,
     "max_product_records": 5
   },
+  "orchestration": {
+    "use_upstream_planner": true,
+    "strict_upstream_plan": true
+  },
   "nlu": {
-    "model": "Qwen2.5-0.5B-Instruct",
-    "optimization": "ipex_llm_int8_amx"
+    "backend": "openvino",
+    "model": "/home/xiaodong/upstream/models/Qwen2.5-Coder-3B-Instruct-int8-ov",
+    "optimization": "ipex_llm_int8_amx",
+    "temperature": 0.0,
+    "max_new_tokens": 256
   },
   "embedding": {
     "backend": "transformers",
@@ -24,7 +31,7 @@
   "xdp": {
     "asr": {
       "model_name": "whisper",
-      "model": /data/whisper/whisper-large-v3-fp32-ov,
+      "model": /home/shan/asr/whisper-large-v3-fp32-ov,
       "language": "en",
       "task": "transcribe",
       "backend": openvino,

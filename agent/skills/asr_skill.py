@@ -44,10 +44,17 @@ class ASRSkill(BaseSkill):
         }
 
     def _invoke_xdp(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        safe_config = dict(config)
+        num_runs = safe_config.get("num_runs")
+        if isinstance(num_runs, (int, float)):
+            safe_config["num_runs"] = max(1, int(num_runs))
+        elif num_runs is None:
+            safe_config["num_runs"] = 1
+
         try:
             from xdp_api import get_xdp
             asr_fn = get_xdp("asr")
-            result = asr_fn(config)
+            result = asr_fn(safe_config)
             
             if isinstance(result, dict):
                 transcript = (

@@ -1,0 +1,25 @@
+{
+  "dialog_history": [
+    {
+      "role": "user",
+      "content": "我长痘了，推荐个精华",
+      "timestamp": "2026-02-26T05:15:00.029430+00:00"
+    },
+    {
+      "role": "assistant",
+      "content": "宝子你这个问题问得太对了！你可以优先看“舒缓维稳精华”，因为它神经酰胺配方，帮助稳定敏感泛红，先隔天晚间少量使用更稳妥。",
+      "timestamp": "2026-02-26T05:15:00.030319+00:00"
+    }
+  ],
+  "user_profile": {
+    "skin_type": null,
+    "concerns": [],
+    "age_range": null,
+    "price_pref": null
+  },
+  "product_records": [
+    "sku_1002",
+    "sku_1004",
+    "sku_1003"
+  ]
+}

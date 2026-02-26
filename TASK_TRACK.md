@@ -16,25 +16,61 @@
 | :------ | :---------------------------------------------------- | :--- |
 | Phase 1 | 搭建基础架构，支持文本交互                                         | Done |
 | Phase 2 | 接入xDP API语音能力（ASR/TTS）                                | WIP  |
-| Phase 3 | 替换Mock 服务，接入真实模型（NLU/Planner）                         | Wait |
+| Phase 3 | OpenClaw 上游主导 NLU/Planner，bridge 透传执行                  | 基本完成（稳定性收口中） |
 | Phase 4 | 接入商品库(demo)， end-to-end联调, 保证性能(若不满足性能将NLU LLM迁移到GPU) | Wait |
 
 <br />
 
-### **对于Phase 3 要替换的Mock服务**
+### **当前真实状态（2026-02-26）**
 
 | Skill      | 职责         | 状态                    |
 | :--------- | :--------- | :-------------------- |
-| ASR        | 语音→ 文字     | 已接入xDP  API           |
-| NLU        | 意图识别+ 实体提取 | !当前为规则匹配（Mock）        |
-| RAG        | 商品向量检索     | !当前为本地Embedding（Mock） |
-| Generation | 对话生成       | !当前为模板填充（Mock）        |
-| TTS        | 文字→ 语音     | !已接入xDP（待验证）          |
-| Memory     | 对话历史& 用户画像 | 已实现JSON 存储            |
+| ASR        | 语音→ 文字     | 已接入 xDP API；`num_runs<=0` 自动矫正为 `1` |
+| NLU        | 意图识别+实体提取 | 已改为 OpenClaw 上游主导（本地不兜底） |
+| Planner    | 计划编排       | 已改为 OpenClaw 上游主导；支持 strict upstream plan |
+| RAG        | 商品向量检索     | 本地检索链路可执行（mock 数据） |
+| Generation | 对话生成       | 模板生成可执行（后续可替换模型） |
+| TTS        | 文字→语音      | xDP 已接入，但未纳入本轮验收（暂不阻塞） |
+| Memory     | 对话历史&用户画像 | JSON 持久化已稳定工作 |
 
 <br />
 
-#### **对于其中的NLU skill, LLM(for xeon)如下：**
+### **已完成验证**
+
+- `scripts/test_openclaw_e2e.sh` 通过（provider 接口 + bridge 严格上游链路）。
+- `tests/test_agent.py` 中严格模式单测通过：
+  - `strict_upstream_mode_requires_plan`
+  - `strict_upstream_mode_executes_plan`
+- 结论：**NLU/Planner 主链路已通**（OpenClaw 上游下发 `nlu/plan` → bridge 透传 → 本地执行）。
+
+### **当前仍缺（先不含 TTS）**
+
+1. **Gateway 真实对话回路稳定性收口**
+	- 需证明：OpenClaw gateway -> `xdp-agent-bridge` skill -> Python bridge -> agent core 全链路可用。
+   - 当前症状：agent 回合偶发 `Request was aborted`/`Connection error`，属于网关回路稳定性问题，不是 NLU/Planner 功能缺失。
+2. **OpenClaw workspace 与 skill 可见性一致性**
+	- `OPENCLAW_WORKSPACE` 必须指向包含 `skills/xdp-agent-bridge` 的目录。
+3. **Gateway 模型上下文窗口阈值校准**
+	- 若 provider 模型元数据上下文窗口过小（如 4096），`openclaw agent` 会拒绝执行，需要校准到 >=16000。
+
+### **一键脚本（新增）**
+
+- `scripts/test_openclaw_gateway_e2e.sh`
+  - 覆盖：onboard local provider、启动 provider+bridge+gateway、检查 skill 可见、触发 gateway agent turn、校验 bridge memory 落盘。
+
+### **建议执行顺序**
+
+```bash
+# 1) 跑 gateway 真实回路（不含 TTS）
+ENV_NAME=xagent bash scripts/test_openclaw_gateway_e2e.sh
+
+# 2) 若仅做 provider+bridge 快速回归
+ENV_NAME=xagent bash scripts/test_openclaw_e2e.sh
+```
+
+---
+
+### **NLU 模型选型备注（for Xeon）**
 
 <br />
 

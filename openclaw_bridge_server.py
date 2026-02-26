@@ -103,6 +103,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
         text = payload.get("text")
         response_mode = payload.get("response_mode") or "text"
+        upstream_nlu = payload.get("nlu")
+        upstream_plan = payload.get("plan")
         try:
             audio_data = _decode_audio_from_payload(payload)
         except ValueError as error:
@@ -111,7 +113,13 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
         try:
             output = self.agent.process_sync(
-                AgentInput(text=text, audio=audio_data, response_mode=str(response_mode))
+                AgentInput(
+                    text=text,
+                    audio=audio_data,
+                    response_mode=str(response_mode),
+                    upstream_nlu=upstream_nlu if isinstance(upstream_nlu, dict) else None,
+                    upstream_plan=upstream_plan if isinstance(upstream_plan, list) else None,
+                )
             )
             _json_response(
                 self,

@@ -1,0 +1,1 @@
+ENV_NAME=xagent bash scripts/run_openclaw_with_local_provider.sh

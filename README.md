@@ -70,7 +70,8 @@
   - 尝试调用 `xdp_api.asr`，失败时回退到本地解码 fallback。
 
 - `agent/skills/nlu.py`
-  - 当前为规则+桩（模型标记为 Qwen2.5-0.5B profile）。
+  - 支持真实模型推理：`transformers` 本地 Qwen 或 `openai_compatible` 服务。
+  - 当模型不可用时自动回退到规则模式，保证主链路可用。
   - 输出 `{intent, entities, skill_chain, confidence}`。
 
 - `agent/skills/rag_skill.py`
@@ -96,6 +97,12 @@
 - `openai_mock_server.py`
   - OpenAI-compatible mock provider。
   - 支持 `/v1/models`、`/v1/chat/completions`、`/v1/responses`（含 stream）。
+
+### 2.5 本地模型 Provider（可替换）
+- `providers/openvino_openai_provider/server.py`
+  - OpenAI-compatible 本地模型服务（OpenVINO 后端）。
+  - 用于把本地模型接入 OpenClaw custom provider。
+  - 支持 `/v1/models`、`/v1/chat/completions`、`/v1/responses`。
 
 ---
 
@@ -158,6 +165,16 @@ bash scripts/start_openclaw_runtime.sh
 - 启动 Agent bridge（8099）
 - 启动 mock model（18080，可通过 `ENABLE_MOCK_MODEL=0` 关闭）
 - 启动 OpenClaw gateway
+
+若要启用本地 OpenVINO provider（替代 mock）：
+
+```bash
+cd /home/demo/Agent
+USE_LOCAL_PROVIDER=1 \
+LOCAL_PROVIDER_MODEL_ID=/home/xiaodong/upstream/models/Qwen2.5-Coder-3B-Instruct-int8-ov \
+LOCAL_PROVIDER_MODEL_NAME=qwen25-coder-3b-int8-ov \
+bash scripts/start_openclaw_runtime.sh
+```
 
 ### 4.2 自检命令
 
@@ -242,6 +259,59 @@ conda run -n xagent python -m pytest -q tests/test_agent.py
 - 关键类/函数 docstring：参数含义、行为、fallback 逻辑。
 - 启动脚本注释：每一步做什么、为什么。
 
-如果你后续要接入真实模型，我建议先替换两处：
-1. `agent/skills/nlu.py`（规则桩 -> 模型推理）
-2. `agent/skills/generation_skill.py`（模板桩 -> 模型生成）
+如果你后续要接入真实模型，当前建议优先推进：
+1. `agent/skills/generation_skill.py`（模板桩 -> 模型生成）
+
+### NLU 模型配置示例
+
+`config/agent.yaml` 中 `nlu` 段支持两种模式：
+
+1) 本地 Qwen（transformers）
+
+```json
+"nlu": {
+  "backend": "transformers",
+  "model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "optimization": "ipex_llm_int8_amx",
+  "temperature": 0.0,
+  "max_new_tokens": 256
+}
+```
+
+2) OpenAI 兼容接口（例如本地 vLLM/TGI 网关）
+
+```json
+"nlu": {
+  "backend": "openai_compatible",
+  "model": "Qwen2.5-0.5B-Instruct",
+  "openai_base_url": "http://127.0.0.1:18080/v1",
+  "openai_model": "Qwen2.5-0.5B-Instruct",
+  "openai_api_key": "stub-key",
+  "temperature": 0.0,
+  "max_new_tokens": 256
+}
+```
+
+### NLU 快速验证
+
+```bash
+cd /home/demo/Agent
+conda run -n xagent python main.py --text "我长痘了，推荐个精华"
+```
+
+预期：输出中的 `nlu.model.backend` 为 `transformers` 或 `openai_compatible`，且 `fallback=false`。
+
+### OpenClaw-first 编排模式（推荐）
+
+当前支持把 NLU/Planner 主逻辑交给 OpenClaw，上游结果优先：
+
+```json
+"orchestration": {
+  "use_upstream_planner": true,
+  "strict_upstream_plan": true
+}
+```
+
+- `use_upstream_planner=true`：本地 Agent 不再主动运行本地 NLU/Planner，优先执行上游传入的 `nlu/plan`。
+- `strict_upstream_plan=true`：强制要求上游必须传 `plan`，否则报错。
+- `strict_upstream_plan=true`：默认模式，强制要求上游必须传 `plan`，否则直接报错（严格 OpenClaw-only）。

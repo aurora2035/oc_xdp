@@ -8,6 +8,10 @@ from agent import AgentInput, OpenClawAgent
 def _build_config(tmp_path: Path) -> dict:
     return {
         "agent": {"name": "test-agent", "log_level": "INFO"},
+        "orchestration": {
+            "use_upstream_planner": False,
+            "strict_upstream_plan": False,
+        },
         "memory": {
             "store_path": str(tmp_path / "memory.json"),
             "max_history_rounds": 3,
@@ -62,3 +66,70 @@ def test_audio_response_mode_uses_tts(tmp_path: Path) -> None:
     assert output.text
     assert output.audio_b64
     assert "tts" in output.skill_outputs
+
+
+def test_upstream_plan_is_reused(tmp_path: Path) -> None:
+    agent = OpenClawAgent(config=_build_config(tmp_path))
+    output = agent.process_sync(
+        AgentInput(
+            text="这条文案不应该触发本地nlu",
+            upstream_nlu={
+                "intent": "chitchat",
+                "entities": {},
+                "skill_chain": ["generation"],
+                "confidence": 0.99,
+                "model": {"name": "openclaw-upstream"},
+                "cv_available": False,
+            },
+            upstream_plan=[
+                {
+                    "skill_name": "generation",
+                    "params": {
+                        "query": "来自openclaw的已规划query",
+                        "intent": "chitchat",
+                        "entities": {},
+                        "rag_candidates": [],
+                    },
+                    "async": False,
+                }
+            ],
+        )
+    )
+    assert output.nlu.get("model", {}).get("name") == "openclaw-upstream"
+    assert len(output.plan) == 1
+    assert output.plan[0]["skill_name"] == "generation"
+
+
+def test_strict_upstream_mode_requires_plan(tmp_path: Path) -> None:
+    config = _build_config(tmp_path)
+    config["orchestration"] = {"use_upstream_planner": True, "strict_upstream_plan": True}
+    agent = OpenClawAgent(config=config)
+    try:
+        agent.process_sync(AgentInput(text="hello"))
+        assert False, "expected ValueError when strict upstream mode has no plan"
+    except ValueError as error:
+        assert "upstream plan required" in str(error)
+
+
+def test_strict_upstream_mode_executes_plan(tmp_path: Path) -> None:
+    config = _build_config(tmp_path)
+    config["orchestration"] = {"use_upstream_planner": True, "strict_upstream_plan": True}
+    agent = OpenClawAgent(config=config)
+    output = agent.process_sync(
+        AgentInput(
+            text="hello",
+            upstream_plan=[
+                {
+                    "skill_name": "generation",
+                    "params": {
+                        "query": "hello",
+                        "intent": "chitchat",
+                        "entities": {},
+                        "rag_candidates": [],
+                    },
+                    "async": False,
+                }
+            ],
+        )
+    )
+    assert output.plan[0]["skill_name"] == "generation"
