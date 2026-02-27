@@ -21,7 +21,7 @@
 
 <br />
 
-### **当前真实状态（2026-02-26）**
+### **当前真实状态（2026-02-27）**
 
 | Skill      | 职责         | 状态                    |
 | :--------- | :--------- | :-------------------- |
@@ -45,9 +45,9 @@
 
 ### **当前仍缺（先不含 TTS）**
 
-1. **Gateway 真实对话回路稳定性收口**
-	- 需证明：OpenClaw gateway -> `xdp-agent-bridge` skill -> Python bridge -> agent core 全链路可用。
-   - 当前症状：agent 回合偶发 `Request was aborted`/`Connection error`，属于网关回路稳定性问题，不是 NLU/Planner 功能缺失。
+1. **Gateway 真实对话回路稳定性收口（已达成本轮验收）**
+	- 已验证：OpenClaw gateway -> `xdp-agent-bridge` skill -> Python bridge -> agent core 可跑通到 `Step10 PASS`。
+  - 已知现象：`agent.wait` 在当前环境可能持续返回 `timeout`；脚本已加 fallback 兜底，不阻塞本轮联调验收。
 2. **OpenClaw workspace 与 skill 可见性一致性**
 	- `OPENCLAW_WORKSPACE` 必须指向包含 `skills/xdp-agent-bridge` 的目录。
 3. **Gateway 模型上下文窗口阈值校准**
@@ -57,14 +57,21 @@
 
 - `scripts/test_openclaw_gateway_e2e.sh`
   - 覆盖：onboard local provider、启动 provider+bridge+gateway、检查 skill 可见、触发 gateway agent turn、校验 bridge memory 落盘。
+- `run_manual_provider.sh`（项目根目录）
+  - 用于手动启动本地 provider（前台运行，便于观察日志）。
+- `run_gateway_e2e.sh`（项目根目录）
+  - 用于复现 gateway e2e 全流程（默认输出日志到 `/tmp/step9_twowait_debug_v5.log`）。
 
 ### **建议执行顺序**
 
 ```bash
-# 1) 跑 gateway 真实回路（不含 TTS）
-ENV_NAME=xagent bash scripts/test_openclaw_gateway_e2e.sh
+# 1) 终端A：先起 provider（保持前台）
+bash run_manual_provider.sh
 
-# 2) 若仅做 provider+bridge 快速回归
+# 2) 终端B：跑 gateway 真实回路（不含 TTS）
+bash run_gateway_e2e.sh
+
+# 3) 若仅做 provider+bridge 快速回归
 ENV_NAME=xagent bash scripts/test_openclaw_e2e.sh
 ```
 

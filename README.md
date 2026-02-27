@@ -176,6 +176,28 @@ LOCAL_PROVIDER_MODEL_NAME=qwen25-coder-3b-int8-ov \
 bash scripts/start_openclaw_runtime.sh
 ```
 
+### 4.1.1 手动启动 provider 并看实时日志（排查 Step9 超时）
+
+当你希望单独观察 provider 是否收到请求、推理耗时多长，可先手动启动 provider：
+
+```bash
+cd /home/demo/Agent
+ENV_NAME=xagent \
+MODEL_ID=/home/xiaodong/upstream/models/Qwen2.5-Coder-3B-Instruct-int8-ov \
+MODEL_NAME=qwen25-coder-3b-int8-ov \
+LOG_FILE=/tmp/openvino_provider_manual.log \
+bash scripts/start_openvino_provider_manual.sh
+```
+
+再在另一个终端运行 gateway e2e，并声明使用手动 provider：
+
+```bash
+cd /home/demo/Agent
+MANUAL_PROVIDER=1 ENV_NAME=xagent bash scripts/test_openclaw_gateway_e2e.sh
+```
+
+说明：`MANUAL_PROVIDER=1` 时，e2e 脚本不会自动拉起/停止 18080 的 provider 进程，方便你持续盯日志。
+
 ### 4.2 自检命令
 
 ```bash

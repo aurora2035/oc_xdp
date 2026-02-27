@@ -13,6 +13,12 @@ USE_LOCAL_PROVIDER="${USE_LOCAL_PROVIDER:-0}"
 LOCAL_PROVIDER_MODEL_ID="${LOCAL_PROVIDER_MODEL_ID:-/home/xiaodong/upstream/models/Qwen2.5-Coder-3B-Instruct-int8-ov}"
 LOCAL_PROVIDER_MODEL_NAME="${LOCAL_PROVIDER_MODEL_NAME:-qwen25-coder-3b-int8-ov}"
 
+# 当 USE_LOCAL_PROVIDER=0 且 ENABLE_MOCK_MODEL=0 时，认为 18080 由外部手动 provider 管理
+EXTERNAL_PROVIDER_MODE=0
+if [[ "$USE_LOCAL_PROVIDER" == "0" && "$ENABLE_MOCK_MODEL" == "0" ]]; then
+  EXTERNAL_PROVIDER_MODE=1
+fi
+
 # 先清理可能残留的端口占用
 cleanup_port() {
   local port=$1
@@ -27,7 +33,11 @@ cleanup_port() {
 
 echo "[0/2] Cleaning up ports..."
 cleanup_port 8099
-cleanup_port 18080
+if [[ "$EXTERNAL_PROVIDER_MODE" != "1" ]]; then
+  cleanup_port 18080
+else
+  echo "[INFO] External provider mode detected, skip cleanup on port 18080"
+fi
 
 # 检查工作空间
 if [[ ! -d "$OPENCLAW_WORKSPACE" ]]; then
@@ -69,7 +79,11 @@ cleanup() {
   
   # 确保端口释放
   cleanup_port 8099
-  cleanup_port 18080
+  if [[ "$EXTERNAL_PROVIDER_MODE" != "1" ]]; then
+    cleanup_port 18080
+  else
+    echo "[INFO] External provider mode detected, keep port 18080 process intact"
+  fi
 }
 trap cleanup EXIT INT TERM
 
