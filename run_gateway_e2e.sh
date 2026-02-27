@@ -16,8 +16,10 @@ echo "[e2e] MODEL_NAME=$MODEL_NAME"
 echo "[e2e] LOG_FILE=$LOG_FILE"
 echo "[e2e] STRICT_GATEWAY_WAIT=$STRICT_GATEWAY_WAIT"
 
+# 设置超时时间为 300 秒（5分钟），确保本地模型有足够时间完成推理
 MANUAL_PROVIDER=1 \
 ENV_NAME="$ENV_NAME" \
 MODEL_NAME="$MODEL_NAME" \
 STRICT_GATEWAY_WAIT="$STRICT_GATEWAY_WAIT" \
+AGENT_WAIT_TIMEOUT_MS="${AGENT_WAIT_TIMEOUT_MS:-300000}" \
 bash scripts/test_openclaw_gateway_e2e.sh | tee "$LOG_FILE"

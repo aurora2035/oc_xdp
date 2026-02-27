@@ -22,7 +22,7 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ENV_NAME="${ENV_NAME:-xagent}"
 OPENCLAW_DIR="${OPENCLAW_DIR:-$ROOT_DIR/../openclaw}"
 OPENCLAW_WORKSPACE="${OPENCLAW_WORKSPACE:-$ROOT_DIR/.openclaw}"
-MODEL_ID="${MODEL_ID:-/home/xiaodong/upstream/models/Qwen2.5-Coder-3B-Instruct-int8-ov}"
+MODEL_ID="${MODEL_ID:-/home/upstream/models/Qwen2.5-Coder-3B-Instruct-int8-ov}"
 MODEL_NAME="${MODEL_NAME:-qwen25-coder-3b-int8-ov}"
 PROVIDER_ID="${PROVIDER_ID:-localov}"
 MANUAL_PROVIDER="${MANUAL_PROVIDER:-0}"
@@ -86,8 +86,8 @@ cleanup() {
   pkill -f "openclaw_bridge_server.py" >/dev/null 2>&1 || true
   if [[ "$MANUAL_PROVIDER" != "1" ]]; then
     pkill -f "providers/openvino_openai_provider/server.py" >/dev/null 2>&1 || true
+    pkill -f "openai_mock_server.py" >/dev/null 2>&1 || true
   fi
-  pkill -f "openai_mock_server.py" >/dev/null 2>&1 || true
   pkill -f "pnpm openclaw gateway" >/dev/null 2>&1 || true
   pkill -f "openclaw-gateway" >/dev/null 2>&1 || true
   cleanup_port 8099
@@ -293,8 +293,10 @@ fi
 AGENT_LOG="/tmp/openclaw_agent_turn.json"
 AGENT_CALL_LOG="/tmp/openclaw_agent_call.json"
 AGENT_WAIT_LOG="/tmp/openclaw_agent_wait.json"
+# 注意：本地模型推理较慢（OpenVINO Qwen2-0.5B 约 9-15 秒），加上 OpenClaw 内部处理
+# 总耗时可能达到 120-180 秒。设置为 300 秒（5分钟）以确保有足够时间完成
 AGENT_TIMEOUT_SECONDS="${AGENT_TIMEOUT_SECONDS:-600}"
-AGENT_WAIT_TIMEOUT_MS="${AGENT_WAIT_TIMEOUT_MS:-180000}"
+AGENT_WAIT_TIMEOUT_MS="${AGENT_WAIT_TIMEOUT_MS:-300000}"
 AGENT_WAIT_MAX_ATTEMPTS="${AGENT_WAIT_MAX_ATTEMPTS:-2}"
 
 IDEMPOTENCY_KEY="e2e-$(date +%s)-$RANDOM"

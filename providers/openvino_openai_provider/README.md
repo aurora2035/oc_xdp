@@ -15,11 +15,11 @@
 ## 启动方式
 
 ```bash
-cd /home/xiaodong/upstream/oc_xdp
+cd /home/upstream/oc_xdp
 conda run -n xagent python providers/openvino_openai_provider/server.py \
   --host 127.0.0.1 \
   --port 18080 \
-  --model-id /home/xiaodong/upstream/models/Qwen2.5-Coder-3B-Instruct-int8-ov \
+  --model-id /home/upstream/models/Qwen2.5-Coder-3B-Instruct-int8-ov \
   --model-name qwen25-coder-3b-int8-ov
 ```
 

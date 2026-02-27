@@ -171,7 +171,7 @@ bash scripts/start_openclaw_runtime.sh
 ```bash
 cd /home/demo/Agent
 USE_LOCAL_PROVIDER=1 \
-LOCAL_PROVIDER_MODEL_ID=/home/xiaodong/upstream/models/Qwen2.5-Coder-3B-Instruct-int8-ov \
+LOCAL_PROVIDER_MODEL_ID=/home/upstream/models/Qwen2.5-Coder-3B-Instruct-int8-ov \
 LOCAL_PROVIDER_MODEL_NAME=qwen25-coder-3b-int8-ov \
 bash scripts/start_openclaw_runtime.sh
 ```
@@ -183,7 +183,7 @@ bash scripts/start_openclaw_runtime.sh
 ```bash
 cd /home/demo/Agent
 ENV_NAME=xagent \
-MODEL_ID=/home/xiaodong/upstream/models/Qwen2.5-Coder-3B-Instruct-int8-ov \
+MODEL_ID=/home/upstream/models/Qwen2.5-Coder-3B-Instruct-int8-ov \
 MODEL_NAME=qwen25-coder-3b-int8-ov \
 LOG_FILE=/tmp/openvino_provider_manual.log \
 bash scripts/start_openvino_provider_manual.sh

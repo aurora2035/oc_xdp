@@ -1,1 +1,1 @@
-ENV_NAME=xagent MODEL_ID=/home/xiaodong/upstream/models/Qwen2.5-Coder-3B-Instruct-int8-ov MODEL_NAME=qwen25-coder-3b-int8-ov LOG_FILE=/tmp/openvino_provider_manual.log bash scripts/start_openvino_provider_manual.sh
+ENV_NAME=xagent MODEL_ID=/home/upstream/models/Qwen2.5-Coder-3B-Instruct-int8-ov MODEL_NAME=qwen25-coder-3b-int8-ov LOG_FILE=/tmp/openvino_provider_manual.log bash scripts/start_openvino_provider_manual.sh

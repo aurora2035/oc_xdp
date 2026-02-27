@@ -25,7 +25,7 @@ BRIDGE_PORT="${BRIDGE_PORT:-8099}"
 PROVIDER_HOST="${PROVIDER_HOST:-127.0.0.1}"
 PROVIDER_PORT="${PROVIDER_PORT:-18080}"
 
-MODEL_ID="${MODEL_ID:-/home/xiaodong/upstream/models/Qwen2.5-Coder-3B-Instruct-int8-ov}"
+MODEL_ID="${MODEL_ID:-/home/upstream/models/Qwen2.5-Coder-3B-Instruct-int8-ov}"
 MODEL_NAME="${MODEL_NAME:-qwen25-coder-3b-int8-ov}"
 
 cleanup_port() {
