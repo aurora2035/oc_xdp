@@ -11,6 +11,7 @@ import argparse
 import base64
 import json
 from pathlib import Path
+from typing import Any
 import urllib.error
 import urllib.request
 
@@ -25,8 +26,25 @@ def _build_args() -> argparse.Namespace:
         choices=["text", "audio"],
         help="Response mode expected from bridge",
     )
+    parser.add_argument(
+        "--plan-json",
+        default=None,
+        help="Upstream plan JSON array to forward (used with strict_upstream_plan=true)",
+    )
+    parser.add_argument(
+        "--nlu-json",
+        default=None,
+        help="Optional upstream NLU JSON object to forward",
+    )
     parser.add_argument("--url", default="http://127.0.0.1:8099/v1/assist", help="Bridge URL")
     return parser.parse_args()
+
+
+def _parse_json_arg(raw: str, arg_name: str) -> Any:
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise SystemExit(f"Invalid {arg_name}: expected valid JSON") from error
 
 
 def main() -> None:
@@ -47,6 +65,18 @@ def main() -> None:
         if not audio_path.exists() or not audio_path.is_file():
             raise SystemExit(f"Audio file not found: {audio_path}")
         request_body["audio"] = base64.b64encode(audio_path.read_bytes()).decode("utf-8")
+
+    if isinstance(args.plan_json, str) and args.plan_json.strip():
+        parsed_plan = _parse_json_arg(args.plan_json, "--plan-json")
+        if not isinstance(parsed_plan, list):
+            raise SystemExit("Invalid --plan-json: expected JSON array")
+        request_body["plan"] = parsed_plan
+
+    if isinstance(args.nlu_json, str) and args.nlu_json.strip():
+        parsed_nlu = _parse_json_arg(args.nlu_json, "--nlu-json")
+        if not isinstance(parsed_nlu, dict):
+            raise SystemExit("Invalid --nlu-json: expected JSON object")
+        request_body["nlu"] = parsed_nlu
 
     payload = json.dumps(
         request_body,

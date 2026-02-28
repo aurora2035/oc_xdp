@@ -282,8 +282,59 @@ if ! grep -q 'xdp-agent-bridge' "$SKILLS_LOG"; then
   exit 1
 fi
 
+python - <<PY
+import json
+from pathlib import Path
+
+raw = Path("$SKILLS_LOG").read_text(encoding="utf-8", errors="ignore")
+decoder = json.JSONDecoder()
+obj = None
+for idx, ch in enumerate(raw):
+  if ch != "{":
+    continue
+  try:
+    candidate, _ = decoder.raw_decode(raw[idx:])
+  except Exception:
+    continue
+  if isinstance(candidate, dict) and isinstance(candidate.get("skills"), list):
+    obj = candidate
+    break
+
+if not isinstance(obj, dict):
+  raise SystemExit("[ERROR] cannot parse skills list JSON")
+
+skills = obj.get("skills")
+if not isinstance(skills, list):
+  raise SystemExit("[ERROR] skills list missing or invalid")
+
+target = None
+for item in skills:
+  if isinstance(item, dict) and item.get("name") == "xdp-agent-bridge":
+    target = item
+    break
+
+if not isinstance(target, dict):
+  raise SystemExit("[ERROR] xdp-agent-bridge not found in parsed skills list")
+
+eligible = bool(target.get("eligible", False))
+disabled = bool(target.get("disabled", False))
+blocked = bool(target.get("blockedByAllowlist", False))
+source = target.get("source")
+missing = target.get("missing") if isinstance(target.get("missing"), dict) else {}
+
+print("[8/10] xdp-agent-bridge status:")
+print("  eligible=", eligible)
+print("  disabled=", disabled)
+print("  blockedByAllowlist=", blocked)
+print("  source=", source)
+print("  missing=", json.dumps(missing, ensure_ascii=False))
+
+if not eligible:
+  raise SystemExit("[ERROR] xdp-agent-bridge is not eligible; fix missing deps/allowlist before Step9")
+PY
+
 echo "[9/10] Trigger real gateway agent turn..."
-QUERY="E2E-$(date +%s) 调用 xdp-agent-bridge，用户：我长痘了推荐个精华。"
+QUERY="E2E-$(date +%s) 调用 xdp-agent-bridge，用户：我长痘了推荐个精华。注意：调用 skill 时必须传 plan-json（可选 nlu-json），不要只传 text。"
 SESSION_ID="e2e-$(date +%s)-$RANDOM"
 BEFORE_HASH=""
 if [[ -f "$MEMORY_FILE" ]]; then
@@ -534,6 +585,49 @@ if [[ "$STRICT_GATEWAY_WAIT" == "1" && "$WAIT_OK" != "1" && "$LAST_STATUS" == "t
 fi
 
 if [[ "$WAIT_OK" != "1" ]]; then
+  echo "[diag] parsed agent.wait debug:"
+  python - <<PY
+import json
+from pathlib import Path
+
+raw = Path("$AGENT_WAIT_LOG").read_text(encoding="utf-8", errors="ignore")
+decoder = json.JSONDecoder()
+obj = None
+for idx, ch in enumerate(raw):
+  if ch != "{":
+    continue
+  try:
+    candidate, _ = decoder.raw_decode(raw[idx:])
+  except Exception:
+    continue
+  if isinstance(candidate, dict):
+    if isinstance(candidate.get("runId"), str) or isinstance(candidate.get("result"), dict):
+      obj = candidate
+
+if not isinstance(obj, dict):
+  print("agent.wait json not parsable")
+  raise SystemExit(0)
+
+run_id = obj.get("runId")
+status = obj.get("status")
+result = obj.get("result") if isinstance(obj.get("result"), dict) else {}
+if not isinstance(run_id, str):
+  run_id = result.get("runId")
+if not isinstance(status, str):
+  status = result.get("status")
+
+debug = obj.get("debug")
+if not isinstance(debug, dict):
+  debug = result.get("debug") if isinstance(result.get("debug"), dict) else None
+
+print("runId=", run_id)
+print("status=", status)
+if isinstance(debug, dict):
+  print("debug=", json.dumps(debug, ensure_ascii=False))
+else:
+  print("debug=<none>")
+PY
+
   if [[ "$STRICT_GATEWAY_WAIT" == "1" ]]; then
     echo "[ERROR] strict mode enabled: fallback disabled; gateway agent run did not reach success status; last_status=$LAST_STATUS timeout_terminal=$LAST_TIMEOUT_TERMINAL (see $AGENT_CALL_LOG, $AGENT_WAIT_LOG)"
   else

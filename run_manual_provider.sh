@@ -12,13 +12,13 @@ export no_proxy="127.0.0.1,localhost"
 MOCK_MODE="${MOCK_MODE:-0}"
 
 ENV_NAME="${ENV_NAME:-xagent}"
-MODEL_ID="${MODEL_ID:-/home/upstream/models/Qwen2-0.5B-fp16-ov}"
+MODEL_ID="${MODEL_ID:-/home/xiaodong/upstream/models/Qwen2-0.5B-fp16-ov}"
 MODEL_NAME="${MODEL_NAME:-qwen2-0.5b-ov}"
 LOG_FILE="${LOG_FILE:-/tmp/openvino_provider_manual.log}"
 MOCK_LOG_FILE="${MOCK_LOG_FILE:-/tmp/mock_server.log}"
 EAGER_LOAD="${EAGER_LOAD:-0}"
 DEFAULT_MAX_NEW_TOKENS="${DEFAULT_MAX_NEW_TOKENS:-16}"
-MAX_NEW_TOKENS_CAP="${MAX_NEW_TOKENS_CAP:-32}"
+MAX_NEW_TOKENS_CAP="${MAX_NEW_TOKENS_CAP:-384}"
 
 # 清理端口
 cleanup_port() {
@@ -102,7 +102,7 @@ else
   
   pkill -f 'openvino_openai_provider/server.py' >/dev/null 2>&1 || true
   
-  /root/miniconda3/envs/xagent/bin/python providers/openvino_openai_provider/server.py \
+  /root//miniforge3/envs/xagent/bin/python providers/openvino_openai_provider/server.py \
     --host 127.0.0.1 \
     --port 18080 \
     --model-id "$MODEL_ID" \

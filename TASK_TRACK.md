@@ -205,6 +205,233 @@ MOCK_MODE=0 ./run_manual_provider.sh
 
 ---
 
+---
+
+## 2026-02-28 追加更新（Strict 卡死定位）
+
+### 现象与结论
+
+- 现象：`agent.wait` 持续返回 `status=timeout`，但 provider 侧已看到模型正常返回（`completion` 非空）。
+- 已确认：`xdp-agent-bridge` 在 `skills list` 中 `eligible=true`，不是 skill 不可见问题。
+- 关键诊断（新增 debug 后）：
+   - `lifecycleStarts=1`
+   - `lifecycleEnds=0`
+   - `lifecycleErrors=0`
+   - `hasCachedSnapshot=false`
+- 结论：OpenClaw run 进入了生命周期 `start`，但没有进入 `end/error` 终态，导致 `agent.wait` 只能 timeout。
+
+### 本仓已新增的可观测性改动
+
+1. `oc_xdp` 侧（测试脚本）
+    - `scripts/test_openclaw_gateway_e2e.sh`
+       - Step8 skills JSON 解析增强（避免被 tsdown 构建日志干扰）
+       - Step9 失败时输出 `agent.wait` 的 `debug` 字段
+    - `mau_e2e_test.sh`
+       - 增加 provider 健康检查（18080）
+       - 增加统一日志文件（默认 `/tmp/mau_e2e_test.log`）
+
+2. `openclaw` 侧（核心诊断）
+    - 在 `agent.wait timeout` 返回中加入 `debug`（run 级生命周期观测信息）
+
+### OpenClaw 修改 diff（可直接迁移到新机器）
+
+在 OpenClaw 仓库根目录执行：
+
+```bash
+git apply <<'PATCH'
+diff --git a/src/gateway/server-methods/agent-job.ts b/src/gateway/server-methods/agent-job.ts
+index 1acd1bea1..50f5e9d4c 100644
+--- a/src/gateway/server-methods/agent-job.ts
++++ b/src/gateway/server-methods/agent-job.ts
+@@ -11,6 +11,7 @@ const AGENT_RUN_ERROR_RETRY_GRACE_MS = 15_000;
+ const agentRunCache = new Map<string, AgentRunSnapshot>();
+ const agentRunStarts = new Map<string, number>();
+ const pendingAgentRunErrors = new Map<string, PendingAgentRunError>();
++const agentRunDebug = new Map<string, AgentRunDebugState>();
+ let agentRunListenerStarted = false;
+ 
+ type AgentRunSnapshot = {
+@@ -28,12 +29,83 @@ type PendingAgentRunError = {
+    timer: NodeJS.Timeout;
+ };
+ 
++type AgentRunDebugState = {
++  runId: string;
++  lastEventTs?: number;
++  lastStream?: string;
++  lastSeq?: number;
++  lastLifecyclePhase?: string;
++  lastLifecycleTs?: number;
++  lifecycleStarts: number;
++  lifecycleEnds: number;
++  lifecycleErrors: number;
++};
++
++export type AgentRunDebugSnapshot = {
++  runId: string;
++  listenerStarted: boolean;
++  observed: {
++    lastEventTs?: number;
++    lastStream?: string;
++    lastSeq?: number;
++    lastLifecyclePhase?: string;
++    lastLifecycleTs?: number;
++    lifecycleStarts: number;
++    lifecycleEnds: number;
++    lifecycleErrors: number;
++  };
++  inMemory: {
++    startedAt?: number;
++    hasCachedSnapshot: boolean;
++    cachedStatus?: "ok" | "error" | "timeout";
++    cachedEndedAt?: number;
++    pendingErrorDueAt?: number;
++  };
++};
++
+ function pruneAgentRunCache(now = Date.now()) {
+    for (const [runId, entry] of agentRunCache) {
+       if (now - entry.ts > AGENT_RUN_CACHE_TTL_MS) {
+          agentRunCache.delete(runId);
+       }
+    }
++  for (const [runId, debug] of agentRunDebug) {
++    if (typeof debug.lastEventTs === "number" && now - debug.lastEventTs > AGENT_RUN_CACHE_TTL_MS) {
++      agentRunDebug.delete(runId);
++    }
++  }
++}
++
++function trackAgentRunDebug(evt: { runId: string; stream: string; seq: number; ts: number; data?: Record<string, unknown> }) {
++  const state =
++    agentRunDebug.get(evt.runId) ??
++    ({
++      runId: evt.runId,
++      lifecycleStarts: 0,
++      lifecycleEnds: 0,
++      lifecycleErrors: 0,
++    } satisfies AgentRunDebugState);
++
++  state.lastEventTs = evt.ts;
++  state.lastStream = evt.stream;
++  state.lastSeq = evt.seq;
++
++  if (evt.stream === "lifecycle") {
++    const phase = typeof evt.data?.phase === "string" ? evt.data.phase : undefined;
++    if (phase) {
++      state.lastLifecyclePhase = phase;
++      state.lastLifecycleTs = evt.ts;
++      if (phase === "start") {
++        state.lifecycleStarts += 1;
++      } else if (phase === "end") {
++        state.lifecycleEnds += 1;
++      } else if (phase === "error") {
++        state.lifecycleErrors += 1;
++      }
++    }
++  }
++
++  agentRunDebug.set(evt.runId, state);
+ }
+ 
+ function recordAgentRunSnapshot(entry: AgentRunSnapshot) {
+@@ -105,6 +177,13 @@ function ensureAgentRunListener() {
+       if (!evt) {
+          return;
+       }
++    trackAgentRunDebug({
++      runId: evt.runId,
++      stream: String(evt.stream),
++      seq: evt.seq,
++      ts: evt.ts,
++      data: evt.data,
++    });
+       if (evt.stream !== "lifecycle") {
+          return;
+       }
+@@ -141,6 +220,36 @@ function getCachedAgentRun(runId: string) {
+    return agentRunCache.get(runId);
+ }
+ 
++export function getAgentRunDebug(runId: string): AgentRunDebugSnapshot {
++  ensureAgentRunListener();
++  pruneAgentRunCache();
++  const debug = agentRunDebug.get(runId);
++  const startedAt = agentRunStarts.get(runId);
++  const cached = agentRunCache.get(runId);
++  const pending = pendingAgentRunErrors.get(runId);
++  return {
++    runId,
++    listenerStarted: agentRunListenerStarted,
++    observed: {
++      lastEventTs: debug?.lastEventTs,
++      lastStream: debug?.lastStream,
++      lastSeq: debug?.lastSeq,
++      lastLifecyclePhase: debug?.lastLifecyclePhase,
++      lastLifecycleTs: debug?.lastLifecycleTs,
++      lifecycleStarts: debug?.lifecycleStarts ?? 0,
++      lifecycleEnds: debug?.lifecycleEnds ?? 0,
++      lifecycleErrors: debug?.lifecycleErrors ?? 0,
++    },
++    inMemory: {
++      startedAt,
++      hasCachedSnapshot: Boolean(cached),
++      cachedStatus: cached?.status,
++      cachedEndedAt: cached?.endedAt,
++      pendingErrorDueAt: pending?.dueAt,
++    },
++  };
++}
++
+ export async function waitForAgentJob(params: {
+    runId: string;
+    timeoutMs: number;
+diff --git a/src/gateway/server-methods/agent.ts b/src/gateway/server-methods/agent.ts
+index 387077a8b..212cd9c1a 100644
+--- a/src/gateway/server-methods/agent.ts
++++ b/src/gateway/server-methods/agent.ts
+@@ -46,7 +46,7 @@ import {
+    resolveGatewaySessionStoreTarget,
+ } from "../session-utils.js";
+ import { formatForLog } from "../ws-log.js";
+-import { waitForAgentJob } from "./agent-job.js";
++import { getAgentRunDebug, waitForAgentJob } from "./agent-job.js";
+ import { injectTimestamp, timestampOptsFromConfig } from "./agent-timestamp.js";
+ import { normalizeRpcAttachmentsToChatAttachments } from "./attachment-normalize.js";
+ import { sessionsHandlers } from "./sessions.js";
+@@ -728,6 +728,7 @@ export const agentHandlers: GatewayRequestHandlers = {
+          respond(true, {
+             runId,
+             status: "timeout",
++        debug: getAgentRunDebug(runId),
+          });
+          return;
+       }
+PATCH
+```
+
+应用后请重启 gateway 再复现。
+
+### 新机器复现建议步骤
+
+1. 在 `openclaw` 应用上面的 diff。
+2. 启动 provider：`./run_manual_provider.sh`
+3. 执行测试：`./mau_e2e_test.sh`
+4. 若仍超时，执行：
+
+```bash
+OPENCLAW_WORKSPACE=/home/xiaodong/upstream/oc_xdp/.openclaw \
+conda run -n xagent pnpm --dir /home/xiaodong/upstream/openclaw \
+openclaw gateway call agent.wait --json --timeout 8000 \
+--params '{"runId":"<runId>","timeoutMs":5000}'
+```
+
+重点看返回中的 `debug.observed`：
+- `start=1,end=0,error=0` → run 卡在内部执行中，未产生终态事件。
+- `error>0` 或有 `cachedStatus` → 转入具体错误路径排查。
+
+---
+
 **最后更新：2026-02-28**  
-**状态：Phase 3 架构调整中，OpenClaw 不支持模块化 NLU/Planner，改用直接调用模型方案**  
-**下一步：实现直接调用模型做 NLU/Planner**
+**状态：Phase 3 架构调整中 + 已增加 Strict timeout 可观测性诊断**  
+**下一步：基于 `agent.wait.debug` 继续定位 run 未发出 lifecycle end/error 的内部阻塞点**

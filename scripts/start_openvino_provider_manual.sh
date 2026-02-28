@@ -18,7 +18,7 @@ LOG_LEVEL="${LOG_LEVEL:-INFO}"
 LOG_FILE="${LOG_FILE:-/tmp/openvino_provider_manual.log}"
 EAGER_LOAD="${EAGER_LOAD:-1}"
 DEFAULT_MAX_NEW_TOKENS="${DEFAULT_MAX_NEW_TOKENS:-16}"
-MAX_NEW_TOKENS_CAP="${MAX_NEW_TOKENS_CAP:-32}"
+MAX_NEW_TOKENS_CAP="${MAX_NEW_TOKENS_CAP:-384}"
 
 if ! command -v conda >/dev/null 2>&1; then
   echo "[ERROR] conda not found"

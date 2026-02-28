@@ -86,11 +86,13 @@ class ProviderState:
         output_text = self._tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
         prompt_tokens = int(model_inputs["input_ids"].shape[1])
         completion_tokens = int(generated_ids.shape[1])
+        hit_token_limit = completion_tokens >= int(max_new_tokens)
         return {
             "text": output_text,
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "total_tokens": prompt_tokens + completion_tokens,
+            "hit_token_limit": hit_token_limit,
         }
 
 
@@ -222,6 +224,7 @@ class ProviderHandler(BaseHTTPRequestHandler):
             or self.state.default_max_new_tokens
         )
         max_new_tokens = min(max(1, int(requested_max_tokens)), self.state.max_new_tokens_cap)
+        cap_hit = int(requested_max_tokens) > int(max_new_tokens)
         stream = bool(payload.get("stream", False))
 
         if self.path == "/v1/responses":
@@ -277,16 +280,25 @@ class ProviderHandler(BaseHTTPRequestHandler):
                 "object": "chat.completion.chunk",
                 "created": int(time.time()),
                 "model": model_name,
-                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "length" if output.get("hit_token_limit") else "stop",
+                    }
+                ],
             }
             self.wfile.write(f"data: {json.dumps(done_chunk, ensure_ascii=False)}\\n\\n".encode("utf-8"))
             self.wfile.write(b"data: [DONE]\\n\\n")
             self.wfile.flush()
             LOGGER.info(
-                "POST %s stream -> 200 prompt=%s completion=%s infer=%.1fms total=%.1fms",
+                "POST %s stream -> 200 prompt=%s completion=%s requested=%s applied=%s cap_hit=%s infer=%.1fms total=%.1fms",
                 self.path,
                 output["prompt_tokens"],
                 output["completion_tokens"],
+                requested_max_tokens,
+                max_new_tokens,
+                cap_hit,
                 infer_ms,
                 (time.time() - req_start_ts) * 1000,
             )
@@ -307,10 +319,13 @@ class ProviderHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"data: [DONE]\\n\\n")
             self.wfile.flush()
             LOGGER.info(
-                "POST %s stream -> 200 prompt=%s completion=%s infer=%.1fms total=%.1fms",
+                "POST %s stream -> 200 prompt=%s completion=%s requested=%s applied=%s cap_hit=%s infer=%.1fms total=%.1fms",
                 self.path,
                 output["prompt_tokens"],
                 output["completion_tokens"],
+                requested_max_tokens,
+                max_new_tokens,
+                cap_hit,
                 infer_ms,
                 (time.time() - req_start_ts) * 1000,
             )
@@ -356,7 +371,7 @@ class ProviderHandler(BaseHTTPRequestHandler):
                     {
                         "index": 0,
                         "message": {"role": "assistant", "content": output["text"]},
-                        "finish_reason": "stop",
+                        "finish_reason": "length" if output.get("hit_token_limit") else "stop",
                     }
                 ],
                 "usage": {
@@ -367,10 +382,13 @@ class ProviderHandler(BaseHTTPRequestHandler):
             },
         )
         LOGGER.info(
-            "POST %s -> 200 prompt=%s completion=%s infer=%.1fms total=%.1fms",
+            "POST %s -> 200 prompt=%s completion=%s requested=%s applied=%s cap_hit=%s infer=%.1fms total=%.1fms",
             self.path,
             output["prompt_tokens"],
             output["completion_tokens"],
+            requested_max_tokens,
+            max_new_tokens,
+            cap_hit,
             infer_ms,
             (time.time() - req_start_ts) * 1000,
         )
