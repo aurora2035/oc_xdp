@@ -62,87 +62,121 @@
 - Agent Bridge：HTTP 接口稳定，支持 text/audio 双模输入
 - E2E 测试脚本：覆盖 Provider、Bridge、Gateway 三层
 
----
 
-## 4. 核心挑战
+## 3. 当前分析
 
-### 4.1 挑战一：OpenClaw 架构定位不匹配（根本问题）
+### 3.1. 预期设计
+```text
+用户输入
+  ↓
+OpenClaw Runtime（意图识别 & 技能路由）→ 产出 Plan → 传给 xDP
+  - NLU：理解用户想买什么（12s）
+  - Planner：制定计划 [查商品]→[生成话术]（10s）
+  ↓
+xDP Agent Core（业务执行层）
+  - 执行 RAG（查商品）
+  - 执行 Generation（生成回复）
+  ↓
+返回结果
+```
+### 3.2. 实际情况(openclaw实际行为)
+```text
+用户输入
+  ↓
+OpenClaw（完整对话机器人）
+  ├─ 第1轮：NLU + Planner → 决定调用 xdp-agent-bridge skill（12s）
+  ├─ 第2轮：等待 skill 返回，反思结果（10s）
+  ├─ 第3轮：生成最终回复给用户（10s）→ timeout！
+  ↓
+生成回复时超时（实际总耗时：300s+）
 
-**现象**：Step 9 持续超时（300s+），`agent.wait` 无法完成。
-
-**根因定位**：
-- **预期**：OpenClaw 作为"NLU/Planner 工具库"，函数式调用（输入→输出 Plan JSON），耗时预期 22s（12s NLU + 10s Planner）
-- **实际**：OpenClaw 是**完整对话 Agent**，必须执行"理解→计划→执行→生成最终回复"的 3-5 轮循环，每轮处理 2.7 万字符上下文，总耗时 300s+
-
-**分析**：
-- 源码分析确认：OpenClaw 无 `plan-only` 模式，无 `nlu-only` 接口，必须生成最终用户回复（`role: "assistant"`）
-- Session 文件显示：`content=[]`，OpenClaw 在生成最终回复时 timeout，而非返回 Plan
-
-### 4.2 挑战二：Strict 模式与行为冲突
-
-**现象**：开启 `strict_upstream_plan=true` 时链路直接报错。
-
-**根因**：
-- 配置要求上游必须传入 `plan` 参数
-- 但 OpenClaw 调用 xDP skill 时**不传 plan**（因其设计是自身生成回复，非传计划给下游执行）
-- 结果：strict 校验直接拒绝，触发 `strict_upstream_mode_requires_plan` 错误
-
-### 4.3 挑战三：超时配置硬编码
-
-**当前阻塞点**：
-- `call_xdp_agent.py:63`：HTTP 超时硬编码 10s，真实模型场景下频繁超时
-- `agent.yaml`：缺乏灵活的环境变量配置机制
-
----
-
-## 5. 解决方案与实施路线
-
-提供三级方案，按优先级递进：
-
-### 5.1 P1：临时绕过（不改动架构）
-
-**目标**：保障现有链路可跑通，消除硬性阻塞。
-
-**措施**：
-1. **关闭 Strict 模式**：`strict_upstream_plan: false`，允许 fallback 本地生成计划
-2. **超时配置化**：Bridge 超时调整为 60-120s（环境变量可配），Step 9 等待超时调整为 300s
-3. **保持 Mock 兜底**：开发阶段使用 Mock 模式（60s 内完成）
-
-**风险**：OpenClaw 实际成为"摆设"，xDP 本地 fallback 逻辑承担全部工作，未解决架构不匹配问题。
-
-### 5.2 P2：架构重构
-
-**目标**：实现 README 原设想的"OpenClaw 轻量网关 + xDP 核心大脑"架构。
-
-**核心策略**：**绕过 OpenClaw Agent 逻辑，启用 Direct NLU/Planner**
-
-**具体实施**：
-1. **复用已有代码**：接入已开发的 `nlu_planner_direct.py`，单次模型调用（&lt;15s）替代 OpenClaw 多轮循环
-2. **职责重新划分**：
-   - **OpenClaw**：退化为 API 网关，仅做请求路由与会话管理，不做推理
-   - **xDP Agent**：承担 NLU + Planner + 执行全链路（本地直接调用模型生成 Plan，本地执行 RAG/Generation）
-3. **模式切换**：通过 `USE_DIRECT_NLU_PLANNER=true` 环境变量切换，保留原链路做 fallback
-
-**预期收益**：
-- Step 9 耗时从 300s 降至 &lt;15s
-- 稳定通过 Strict 模式，不再依赖 fallback
-- 架构符合原设计意图（OpenClaw 做网关，xDP 做执行）
-
-### 5.3 P3：长期优化
-
-**目标**：评估是否完全替换 OpenClaw 或引入 LangChain/AutoGen 等框架。
-
-**考虑因素**：
-- 若 OpenClaw 生态价值有限，可考虑完全移除，xDP 直接对外提供 HTTP 接口
-- 若需复杂多 Agent 协作，评估 LangChain 等模块化框架
+注意：xDP Agent 只是被调用的工具，不是执行层主角
+```
+核心矛盾：OpenClaw 坚持要走完"生成最终回复"的完整 Agent 循环（3-5 轮，2.7 万字符上下文），而非仅返回 Plan 给下游执行。
 
 
-**不推荐继续尝试修改 OpenClaw 源码**（方案 3）：
-- 维护成本高，与社区版本 rebase 风险大
-- 框架设计不符（强行让对话 Agent 做 Plan-only 输出）
+### 3.3  核心挑战
+OpenClaw 的"Agent 逻辑"
+OpenClaw 作为完整 Agent，其内部强制执行的多轮自我循环：
+```text
+用户输入
+  ↓
+[第1轮] NLU + Planner → 决定调用某个 skill（如 xdp-agent-bridge）
+  ↓
+等待 skill 返回结果
+  ↓
+[第2轮] 观察结果 → 反思 → 决定下一步（可能再调别的 skill）
+  ↓
+[第3轮] 生成最终回复给用户（这是关键！OpenClaw 坚持要自己做最终回复）
+  ↓
+返回给客户端
+```
+问题就出在第 3 轮：
+OpenClaw 认为自己必须生成最终回复，而不是把 plan 交给下游去执行
+导致多轮模型调用（12s + 10s + 10s...）
+上下文膨胀（2.7万字符 prompt 反复加载）
+Step 9 timeout（还没生成完回复就超时了）
 
-## 6. 结论
 
-项目已完成基础能力建设（Step 1-8、Memory、Mock 体系），当前阻塞于**框架架构不匹配**（OpenClaw 定位 vs 项目需求）。建议**P2 方案**，用 `nlu_planner_direct.py` ，将 OpenClaw 职责从"完整 Agent"降级为"API 网关"
+### 3.4  技术方案选择
+#### 方案A 架构重构
+策略：绕过 OpenClaw 的"Agent 逻辑"（多轮循环），用已开发的 nlu_planner_direct.py，让 OpenClaw 退化为网关或完全移除。
+##### B-1：完全绕过
+```text
+用户请求（HTTP）
+  ↓
+直接打到 xDP Agent Core（Python FastAPI/Flask）
+  ↓
+【xDP 内部 Direct NLU/Planner】（单次模型调用，<15s）
+  ├─ 意图识别：product_qa
+  ├─ 实体提取：concern=痘痘, product_type=精华
+  └─ 生成 Plan：["rag", "generation"]
+  ↓
+【Plan Executor】（本地执行层）
+  ├─ 执行 RAG（查商品）
+  ├─ 执行 Generation（生成回复）
+  └─ 更新 Memory
+  ↓
+返回结果（总耗时：<15s，稳定通过 Strict 模式）
+```
+OpenClaw 角色：完全移除，或由 Nginx/Envoy 替代为纯 API Gateway
+优势：性能最优，架构简单清晰。
+缺点：输出固定 Plan，无法处理动态skill
 
-**下一步行动**：选择技术路线
+##### B-2：OpenClaw 做"网关"（保留外壳，渐进改造）
+```text
+用户请求 → OpenClaw HTTP 入口
+  ↓
+【关键改造】OpenClaw 不做任何推理，直接透传
+  ├─ 不做 NLU（不分析意图）
+  ├─ 不做 Planner（不制定计划）
+  └─ 不走 ReAct 循环（不反思、不多轮）
+  ↓
+调用 xdp-agent-bridge skill（透传用户原文）
+  ↓
+xDP Agent Core 内部执行 Direct NLU/Planner（同 B-1）
+  ├─ 单次调用生成 Plan
+  └─ 本地执行 RAG/Generation
+  ↓
+返回结果给 OpenClaw → OpenClaw 原样返回给用户
+
+OpenClaw 角色：HTTP 路由器 + Skill 注册中心（无状态透传）
+```
+优势：保留 OpenClaw 生态（如 Skill 管理、会话追踪），但消除性能瓶颈；适合需要渐进迁移的场景。
+
+
+#### 方案B 更换Agent  Openclaw替换为模块化框架
+```text
+用户输入
+  ↓
+LangChain（模块化 Agent 框架）
+  ├─ NLU Chain（意图识别）
+  ├─ Planner Chain（计划制定）
+  ↓
+输出 Plan → xDP Agent Core（执行层）
+  ↓
+返回结果
+
+或：xDP 直接对外提供 HTTP 接口，无需中间层
+```
+优势：架构不改，替换掉openclaw， Langchain支持Runnable组合，可精确拆分出NLU Chain + Planner Chain，输出 JSON Plan 后停止，不自动执行后续步骤
