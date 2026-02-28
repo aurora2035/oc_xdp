@@ -47,7 +47,7 @@
 
 ### 3.2 功能验证完成情况
 
-**已稳定交付（Step 1-8 & Step 10）：**
+**已稳定步骤（Step 1-8 & Step 10）：**
 - ✅ **Mock Server 模式**：新增 `MOCK_MODE` 开关，模型响应从 9s 降至 &lt;0.1s，测试提速 5-10 倍，Step 1-8 全部 60s 内通过
 - ✅ **基础链路连通**：Step 7（Bridge 直连）验证通过，证明 **xDP Agent Core 独立执行能力完好**（NLU/Planner 可本地运行，不依赖 OpenClaw）
 - ✅ **Memory 系统**：Step 10 验证通过，对话历史 JSON 持久化稳定工作
@@ -57,14 +57,14 @@
 - ⚠️ **Strict 模式不稳定**：Step 9 在 `STRICT_GATEWAY_WAIT=1`（严格要求 OpenClaw 完成 Agent 循环）下，因 OpenClaw 内部多轮推理（3-5 轮，每轮 9s+，上下文 2.7 万字符）导致 300s 超时
 - ⚠️ **当前 Fallback 兜底**：通过 `strict_upstream_plan=false` + Bridge 超时 120s 配置，Step 9 可 `PASS(fallback)`，即 OpenClaw 超时后自动降级为直接调用 Bridge（同 Step 7 逻辑），但这**违背了"OpenClaw 负责规划"的架构初衷**
 
-### 3.3 关键代码资产
+### 3.3 关键代码
 - `nlu_planner_direct.py`：**已完成开发**，支持直接调用模型做 NLU+Planner（单次调用 &lt;15s），**尚未接入主流程**
 - Agent Bridge：HTTP 接口稳定，支持 text/audio 双模输入
 - E2E 测试脚本：覆盖 Provider、Bridge、Gateway 三层
 
 ---
 
-## 4. 核心挑战与根因分析
+## 4. 核心挑战
 
 ### 4.1 挑战一：OpenClaw 架构定位不匹配（根本问题）
 
@@ -74,7 +74,7 @@
 - **预期**：OpenClaw 作为"NLU/Planner 工具库"，函数式调用（输入→输出 Plan JSON），耗时预期 22s（12s NLU + 10s Planner）
 - **实际**：OpenClaw 是**完整对话 Agent**，必须执行"理解→计划→执行→生成最终回复"的 3-5 轮循环，每轮处理 2.7 万字符上下文，总耗时 300s+
 
-**技术证据**：
+**分析**：
 - 源码分析确认：OpenClaw 无 `plan-only` 模式，无 `nlu-only` 接口，必须生成最终用户回复（`role: "assistant"`）
 - Session 文件显示：`content=[]`，OpenClaw 在生成最终回复时 timeout，而非返回 Plan
 
@@ -99,7 +99,7 @@
 
 提供三级方案，按优先级递进：
 
-### 5.1 P0：临时止血（本周可落地，零架构改动）
+### 5.1 P1：临时绕过（不改动架构）
 
 **目标**：保障现有链路可跑通，消除硬性阻塞。
 
@@ -110,14 +110,14 @@
 
 **风险**：OpenClaw 实际成为"摆设"，xDP 本地 fallback 逻辑承担全部工作，未解决架构不匹配问题。
 
-### 5.2 P1：架构重构（推荐方案，2周内落地）
+### 5.2 P2：架构重构（推荐方案，2周内落地）
 
 **目标**：实现 README 原设想的"OpenClaw 轻量网关 + xDP 核心大脑"架构。
 
 **核心策略**：**绕过 OpenClaw Agent 逻辑，启用 Direct NLU/Planner**
 
 **具体实施**：
-1. **启用已有资产**：接入已开发的 `nlu_planner_direct.py`，单次模型调用（&lt;15s）替代 OpenClaw 多轮循环
+1. **复用已有代码**：接入已开发的 `nlu_planner_direct.py`，单次模型调用（&lt;15s）替代 OpenClaw 多轮循环
 2. **职责重新划分**：
    - **OpenClaw**：退化为 API 网关，仅做请求路由与会话管理，不做推理
    - **xDP Agent**：承担 NLU + Planner + 执行全链路（本地直接调用模型生成 Plan，本地执行 RAG/Generation）
@@ -128,7 +128,7 @@
 - 稳定通过 Strict 模式，不再依赖 fallback
 - 架构符合原设计意图（OpenClaw 做网关，xDP 做执行）
 
-### 5.3 P2：长期优化（可选）
+### 5.3 P3：长期优化
 
 **目标**：评估是否完全替换 OpenClaw 或引入 LangChain/AutoGen 等框架。
 
@@ -136,39 +136,13 @@
 - 若 OpenClaw 生态价值有限，可考虑完全移除，xDP 直接对外提供 HTTP 接口
 - 若需复杂多 Agent 协作，评估 LangChain 等模块化框架
 
----
 
-## 6. 决策建议与资源需求
+**不推荐继续尝试修改 OpenClaw 源码**（方案 3）：
+- 维护成本高，与社区版本 rebase 风险大
+- 框架设计不符（强行让对话 Agent 做 Plan-only 输出）
 
-### 6.1 技术决策建议
+## 6. 结论
 
-**建议立即执行 P0 + P1**：
-- **P0** 保障本周测试不受阻塞（配置调整，1 天内完成）
-- **P1** 解决根本问题（接入 Direct NLU/Planner，2 周内完成）
-
-**不推荐继续尝试修改 OpenClaw 源码**（方案 C）：
-- 维护成本高，与社区版本 divergence 风险大
-- 框架设计哲学不符（强行让对话 Agent 做 Plan-only 输出）
-
-### 6.2 资源需求
-
-| 任务 | 人力 | 时间 | 依赖 |
-|------|------|------|------|
-| P0 配置调整 | 1 人 | 0.5 天 | 无 |
-| P1 接入 Direct Planner | 1-2 人 | 5 天 | 需确认模型接口稳定性 |
-| E2E 回归测试 | 1 人 | 2 天 | P1 完成后 |
-| 文档更新 | 0.5 人 | 1 天 | 架构确定后 |
-
-### 6.3 风险提醒
-
-- **短期风险**：P0 阶段 Step 9 仍为 fallback 通过，非 strict 通过，技术债务累积
-- **中期风险**：P1 改造需调整配置与启动脚本，需协调部署环境更新
-- **替代方案**：若 P1 实施受阻，需考虑完全移除 OpenClaw（影响范围扩大至网关层）
-
----
-
-## 7. 结论
-
-项目已完成基础能力建设（Step 1-8、Memory、Mock 体系），当前阻塞于**框架架构不匹配**（OpenClaw 定位 vs 项目需求）。建议**立即启动 P1 方案**，启用已具备的 `nlu_planner_direct.py` 能力，将 OpenClaw 职责从"完整 Agent"降级为"API 网关"，以达成 Step 9 性能目标（&lt;15s）与架构一致性。
+项目已完成基础能力建设（Step 1-8、Memory、Mock 体系），当前阻塞于**框架架构不匹配**（OpenClaw 定位 vs 项目需求）。建议**P2 方案**，用 `nlu_planner_direct.py` ，将 OpenClaw 职责从"完整 Agent"降级为"API 网关"
 
 **下一步行动**：选择技术路线
