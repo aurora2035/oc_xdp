@@ -22,7 +22,7 @@ fi
 
 if [[ ! -d "$OPENCLAW_DIR" ]]; then
   echo "[INFO] openclaw repo not found, cloning into: $OPENCLAW_DIR"
-  git clone https://github.com/openclaw/openclaw.git "$OPENCLAW_DIR"
+  git clone https://github.com/openclaw/openclaw.git  "$OPENCLAW_DIR"
 fi
 
 # [0/6] 检查并删除已存在的环境
@@ -36,6 +36,9 @@ fi
 # [1/6] 创建新环境
 echo "[1/6] Create conda env: $ENV_NAME"
 conda create -n "$ENV_NAME" -y python=3.10
+
+# 获取 conda 环境 bin 路径，用于覆盖 nvm 的 node
+CONDA_BIN="$(conda info --base)/envs/$ENV_NAME/bin"
 
 # [2/6] 安装基础依赖
 echo "[2/6] Install runtime dependencies into conda env"
@@ -64,18 +67,21 @@ fi
 # [4/6] 安装 OpenClaw 工作区依赖
 echo "[4/6] Install OpenClaw workspace dependencies"
 cd "$OPENCLAW_DIR"
+export PATH="$CONDA_BIN:$PATH"
 conda run -n "$ENV_NAME" pnpm install
 
 # [5/6] 在子目录中配置 OpenClaw（隔离 soul.md 等配置文件）
 echo "[5/6] Configure OpenClaw workspace + mock provider (isolated in .openclaw/)"
 mkdir -p "$OPENCLAW_WORKSPACE"
+cd "$OPENCLAW_DIR"
+export PATH="$CONDA_BIN:$PATH"
 conda run -n "$ENV_NAME" pnpm openclaw onboard \
   --non-interactive --accept-risk --mode local \
   --workspace "$OPENCLAW_WORKSPACE" \
   --auth-choice custom-api-key \
   --custom-provider-id customstub \
   --custom-compatibility openai \
-  --custom-base-url http://127.0.0.1:18080/v1  \
+  --custom-base-url http://127.0.0.1:18080/v1   \
   --custom-model-id stub-planner-nlu \
   --custom-api-key stub-key \
   --skip-channels --skip-ui --skip-skills --skip-health
