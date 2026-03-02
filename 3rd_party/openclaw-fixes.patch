@@ -1,0 +1,72 @@
+diff --git a/src/agents/pi-embedded-runner/run/attempt.ts b/src/agents/pi-embedded-runner/run/attempt.ts
+index 25d8528fc..aa0d9a224 100644
+--- a/src/agents/pi-embedded-runner/run/attempt.ts
++++ b/src/agents/pi-embedded-runner/run/attempt.ts
+@@ -12,6 +12,7 @@ import {
+ import { resolveHeartbeatPrompt } from "../../../auto-reply/heartbeat.js";
+ import { resolveChannelCapabilities } from "../../../config/channel-capabilities.js";
+ import type { OpenClawConfig } from "../../../config/config.js";
++import { emitAgentEvent } from "../../../infra/agent-events.js";
+ import { getMachineDisplayName } from "../../../infra/machine-name.js";
+ import { MAX_IMAGE_BYTES } from "../../../media/constants.js";
+ import { getGlobalHookRunner } from "../../../plugins/hook-runner-global.js";
+@@ -917,6 +918,8 @@ export async function runEmbeddedAttempt(
+         });
+       };
+ 
++      let lifecycleTerminalSeen = false;
++
+       const subscription = subscribeEmbeddedPiSession({
+         session: activeSession,
+         runId: params.runId,
+@@ -935,7 +938,13 @@ export async function runEmbeddedAttempt(
+         blockReplyChunking: params.blockReplyChunking,
+         onPartialReply: params.onPartialReply,
+         onAssistantMessageStart: params.onAssistantMessageStart,
+-        onAgentEvent: params.onAgentEvent,
++        onAgentEvent: (evt) => {
++          const phase = typeof evt.data?.phase === "string" ? evt.data.phase : undefined;
++          if (evt.stream === "lifecycle" && (phase === "end" || phase === "error")) {
++            lifecycleTerminalSeen = true;
++          }
++          void params.onAgentEvent?.(evt);
++        },
+         enforceFinalTag: params.enforceFinalTag,
+         config: params.config,
+         sessionKey: params.sessionKey ?? params.sessionId,
+@@ -1327,6 +1336,35 @@ export async function runEmbeddedAttempt(
+         }
+         clearActiveEmbeddedRun(params.sessionId, queueHandle, params.sessionKey);
+         params.abortSignal?.removeEventListener?.("abort", onAbort);
++
++        if (!lifecycleTerminalSeen && (aborted || timedOut || promptError)) {
++          const fallbackError = timedOut
++            ? `embedded run terminated by timeout without lifecycle end: runId=${params.runId}`
++            : promptError
++              ? `embedded run terminated by prompt error without lifecycle end: ${describeUnknownError(promptError)}`
++              : `embedded run aborted without lifecycle end: runId=${params.runId}`;
++          emitAgentEvent({
++            runId: params.runId,
++            stream: "lifecycle",
++            data: {
++              phase: "error",
++              error: fallbackError,
++              endedAt: Date.now(),
++            },
++          });
++          try {
++            void params.onAgentEvent?.({
++              stream: "lifecycle",
++              data: {
++                phase: "error",
++                error: fallbackError,
++              },
++            });
++          } catch {
++            // no-op
++          }
++          lifecycleTerminalSeen = true;
++        }
+       }
+ 
+       const lastAssistant = messagesSnapshot

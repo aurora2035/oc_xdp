@@ -150,6 +150,44 @@ cd ~/demo/Agent
 bash scripts/bootstrap_new_machine.sh
 ```
 
+### 3.3 OpenClaw 本地修复 patch（松耦合集成）
+
+- 文件：`3rd_party/openclaw-fixes.patch`
+- 用途：只包含 OpenClaw 的核心逻辑修复（补齐 run 在异常/超时/中断路径可能遗漏的 lifecycle 终态上报）。
+- 设计目标：不长期维护 OpenClaw fork，而是通过 patch 在新机器初始化时按需应用。
+
+`scripts/bootstrap_new_machine.sh` 在 clone OpenClaw 后会执行：
+
+1. `git apply --check 3rd_party/openclaw-fixes.patch`（兼容性验证）
+2. `git apply 3rd_party/openclaw-fixes.patch`（正式应用）
+
+任一步失败都会立即退出，并提示：`上游代码已变更，需更新 patch`。
+
+如果 OpenClaw 目录已存在但你希望仍然执行同样的校验/应用流程，可使用：
+
+```bash
+APPLY_OPENCLAW_PATCH_ALWAYS=1 bash scripts/bootstrap_new_machine.sh
+```
+
+说明：若 patch 已经应用，脚本会识别并跳过，不会误报失败。
+
+### 3.4 patch 失效条件与重新生成
+
+常见失效场景：
+
+- OpenClaw 上游升级后，目标文件上下文变化导致 hunk 无法匹配。
+- 本地 OpenClaw 分支和 patch 基线版本不一致。
+
+重新生成建议流程（在已验证修复有效的 OpenClaw 工作树执行）：
+
+```bash
+cd /path/to/openclaw
+git --no-pager diff -- src/agents/pi-embedded-runner/run/attempt.ts \
+  > /path/to/oc_xdp/3rd_party/openclaw-fixes.patch
+```
+
+注意：生成时仅保留核心逻辑改动，避免把临时 debug 代码（如 `print/console.log/调试注释`）带入 patch。
+
 ---
 
 ## 4. 启动与验证（最短路径）

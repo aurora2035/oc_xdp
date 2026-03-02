@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd "$(dirname "$0")"
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT_DIR"
 
 export NO_PROXY="127.0.0.1,localhost"
 export no_proxy="127.0.0.1,localhost"
@@ -12,13 +13,22 @@ export no_proxy="127.0.0.1,localhost"
 MOCK_MODE="${MOCK_MODE:-0}"
 
 ENV_NAME="${ENV_NAME:-xagent}"
-MODEL_ID="${MODEL_ID:-/home/xiaodong/upstream/models/Qwen2-0.5B-fp16-ov}"
+MODEL_ID="${MODEL_ID:-Qwen2-0.5B-fp16-ov}"
 MODEL_NAME="${MODEL_NAME:-qwen2-0.5b-ov}"
 LOG_FILE="${LOG_FILE:-/tmp/openvino_provider_manual.log}"
 MOCK_LOG_FILE="${MOCK_LOG_FILE:-/tmp/mock_server.log}"
+PYTHON_BIN="${PYTHON_BIN:-}"
 EAGER_LOAD="${EAGER_LOAD:-0}"
 DEFAULT_MAX_NEW_TOKENS="${DEFAULT_MAX_NEW_TOKENS:-16}"
 MAX_NEW_TOKENS_CAP="${MAX_NEW_TOKENS_CAP:-384}"
+
+if [[ -n "$PYTHON_BIN" ]]; then
+  PYTHON_CMD=("$PYTHON_BIN")
+elif command -v conda >/dev/null 2>&1; then
+  PYTHON_CMD=(conda run -n "$ENV_NAME" python)
+else
+  PYTHON_CMD=(python)
+fi
 
 # 清理端口
 cleanup_port() {
@@ -35,6 +45,7 @@ cleanup_port() {
 echo "========================================"
 echo "[provider] MOCK_MODE=$MOCK_MODE"
 echo "[provider] ENV_NAME=$ENV_NAME"
+echo "[provider] PYTHON_CMD=${PYTHON_CMD[*]}"
 
 if [[ "$MOCK_MODE" == "1" ]]; then
   echo "[provider] Using MOCK SERVER (fast mode)"
@@ -45,7 +56,7 @@ if [[ "$MOCK_MODE" == "1" ]]; then
   cleanup_port 18080
   
   # 启动 mock server
-  /root/miniconda3/envs/xagent/bin/python openai_mock_server.py \
+  "${PYTHON_CMD[@]}" openai_mock_server.py \
     --host 127.0.0.1 \
     --port 18080 \
     > "$MOCK_LOG_FILE" 2>&1 &
@@ -90,6 +101,10 @@ if [[ "$MOCK_MODE" == "1" ]]; then
   
 else
   echo "[provider] Using REAL OpenVINO model (slow mode)"
+  if [[ -z "$MODEL_ID" ]]; then
+    echo "[provider] ERROR: MODEL_ID is empty. Please set MODEL_ID to a HuggingFace model id or local model directory."
+    exit 1
+  fi
   echo "[provider] MODEL_NAME=$MODEL_NAME"
   echo "[provider] MODEL_ID=$MODEL_ID"
   echo "[provider] LOG_FILE=$LOG_FILE"
@@ -102,7 +117,7 @@ else
   
   pkill -f 'openvino_openai_provider/server.py' >/dev/null 2>&1 || true
   
-  /root//miniforge3/envs/xagent/bin/python providers/openvino_openai_provider/server.py \
+  "${PYTHON_CMD[@]}" providers/openvino_openai_provider/server.py \
     --host 127.0.0.1 \
     --port 18080 \
     --model-id "$MODEL_ID" \

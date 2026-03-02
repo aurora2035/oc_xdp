@@ -84,14 +84,14 @@
 1. 终端 A：
 
 ```bash
-cd /home/xiaodong/upstream/oc_xdp
+cd /home/upstream/oc_xdp
 ./run_manual_provider.sh
 ```
 
 2. 终端 B：
 
 ```bash
-cd /home/xiaodong/upstream/oc_xdp
+cd /home/upstream/oc_xdp
 ./mau_e2e_test.sh
 ```
 
@@ -104,8 +104,8 @@ tail -n 200 /tmp/mau_e2e_test.log
 4. 手工探测 run：
 
 ```bash
-OPENCLAW_WORKSPACE=/home/xiaodong/upstream/oc_xdp/.openclaw \
-conda run -n xagent pnpm --dir /home/xiaodong/upstream/openclaw \
+OPENCLAW_WORKSPACE=/home/upstream/oc_xdp/.openclaw \
+conda run -n xagent pnpm --dir /home/upstream/openclaw \
 openclaw gateway call agent.wait --json --timeout 8000 \
 --params '{"runId":"<runId>","timeoutMs":5000}'
 ```
@@ -179,4 +179,24 @@ openclaw gateway call agent.wait --json --timeout 8000 \
 ## 8. 安全提醒
 
 你在终端历史里出现过带 token 的命令。请尽快轮换相关 token，避免泄露风险。
+
+---
+
+## 9. 2026-03-02 最新结论（请基于此继续）
+
+1. `agent.wait` 黑盒 timeout 已明显缓解：
+	- 现在可返回终态（`error` 或 `ok`）。
+	- 最新 quick 记录：`runId=e2e-1772414317-32392`，`agent.call=accepted`，`agent.wait=ok`，约 8 秒结束。
+
+2. 新确认修复点：
+	- OpenClaw run 终态兜底补丁（防止 start-only）。
+	- Provider SSE 结束时显式断连（`Connection: close` + `[DONE]` 后关闭连接）。
+
+3. 当前主要剩余问题已切换为：
+	- `agent.wait=ok` 但脚本偶发报“memory 未包含 query marker”（即未稳定调用 `xdp-agent-bridge`）。
+	- 这是 tool 命中率问题，不是 lifecycle 卡死。
+
+4. 下一步优先级：
+	- P0：在 Step9 增加工具约束（只允许 `xdp-agent-bridge`）并验证 memory marker 稳定出现。
+	- P1：补充 tool event 级别日志（是否 dispatch/finish）用于快速判定是“未选 tool”还是“tool 调用失败”。
 

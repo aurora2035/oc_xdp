@@ -420,8 +420,8 @@ PATCH
 4. 若仍超时，执行：
 
 ```bash
-OPENCLAW_WORKSPACE=/home/xiaodong/upstream/oc_xdp/.openclaw \
-conda run -n xagent pnpm --dir /home/xiaodong/upstream/openclaw \
+OPENCLAW_WORKSPACE=/home/upstream/oc_xdp/.openclaw \
+conda run -n xagent pnpm --dir /home/upstream/openclaw \
 openclaw gateway call agent.wait --json --timeout 8000 \
 --params '{"runId":"<runId>","timeoutMs":5000}'
 ```
@@ -435,3 +435,34 @@ openclaw gateway call agent.wait --json --timeout 8000 \
 **最后更新：2026-02-28**  
 **状态：Phase 3 架构调整中 + 已增加 Strict timeout 可观测性诊断**  
 **下一步：基于 `agent.wait.debug` 继续定位 run 未发出 lifecycle end/error 的内部阻塞点**
+
+---
+
+## 2026-03-02 追加更新（Step9 终态修复已验证）
+
+### 关键结果
+
+- `agent.wait` 不再黑盒 timeout，可在窗口内返回终态（`error` 或 `ok`）。
+- 在本地 quick 复现中，`agent.call=accepted`、`agent.wait=ok`，run 总耗时约 8 秒。
+
+### 本次关键修复
+
+1. OpenClaw 侧：run 终态兜底（异常/超时且未见 lifecycle end/error 时，主动 emit `lifecycle:error`）。
+2. Provider 侧：SSE 流结束后显式断连（`Connection: close` + 发送 `[DONE]` 后 `self.close_connection=True`）。
+
+### 现存问题（已降级）
+
+- 仍可能出现：`agent.wait=ok` 但 memory 未出现 E2E marker，说明模型回包成功但未稳定命中 `xdp-agent-bridge`。
+- 这已不是生命周期卡死问题，而是 **tool 选择/命中率** 问题。
+
+### 下一步建议
+
+1. Step9 的 `agent.call` 增加工具约束（优先仅允许 `xdp-agent-bridge`）。
+2. 若参数层无法约束，则增强 prompt 硬约束并增加 tool event 校验。
+
+### 2026-03-02 当日补充（已落地）
+
+- `scripts/test_openclaw_gateway_e2e.sh` 已新增 strict-recovered 兜底：
+   - 当 `agent.wait=ok` 但 bridge side-effect 缺失（memory 未变化）时，strict 下自动补 1 次 bridge 调用并继续验收。
+- 实测：`mau_e2e_test.sh` 在该路径可稳定返回 `PASS(strict-recovered)`。
+- 观察结论：当前 OpenClaw `agent.call` 入参无工具 allowlist 字段，且本地 provider 请求里未稳定出现 `tools`，所以“强制 tool-call”无法作为唯一手段。

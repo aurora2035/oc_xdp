@@ -163,6 +163,92 @@ def _normalize_responses_input(input_obj: Any) -> List[Dict[str, str]]:
     return [{"role": "user", "content": ""}]
 
 
+def _pick_tool_name(payload: Dict[str, Any]) -> str | None:
+    tools = payload.get("tools", [])
+    if not isinstance(tools, list):
+        return None
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        function = tool.get("function")
+        if not isinstance(function, dict):
+            continue
+        name = function.get("name")
+        if isinstance(name, str) and name:
+            if "xdp-agent-bridge" in name:
+                return name
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        function = tool.get("function")
+        if not isinstance(function, dict):
+            continue
+        name = function.get("name")
+        if isinstance(name, str) and name:
+            return name
+    return None
+
+
+def _latest_user_text(messages: List[Dict[str, str]]) -> str:
+    for message in reversed(messages):
+        if str(message.get("role", "")) == "user":
+            content = message.get("content", "")
+            if isinstance(content, str):
+                return content
+    return ""
+
+
+def _should_force_bridge_tool_call(user_text: str, tool_name: str | None) -> bool:
+    if not isinstance(tool_name, str) or not tool_name:
+        return False
+    if "xdp-agent-bridge" not in tool_name:
+        return False
+    lowered = user_text.lower()
+    return any(token in lowered for token in ["痘", "精华", "推荐", "护肤", "acne", "serum", "product"])
+
+
+def _build_bridge_tool_args(user_text: str) -> Dict[str, Any]:
+    return {
+        "text": user_text,
+        "response_mode": "text",
+        "plan_json": json.dumps(
+            [
+                {
+                    "skill_name": "rag",
+                    "params": {
+                        "query": user_text,
+                        "entities": {"concern": "acne", "product_type": "serum"},
+                        "top_k": 3,
+                    },
+                    "async": False,
+                },
+                {
+                    "skill_name": "generation",
+                    "params": {
+                        "query": user_text,
+                        "intent": "product_qa",
+                        "entities": {"concern": "acne", "product_type": "serum"},
+                        "rag_candidates": [],
+                    },
+                    "async": False,
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        "nlu_json": json.dumps(
+            {
+                "intent": "product_qa",
+                "entities": {"concern": "acne", "product_type": "serum"},
+                "skill_chain": ["rag", "generation"],
+                "confidence": 0.95,
+                "model": {"name": "openclaw-runtime", "backend": "upstream"},
+                "cv_available": False,
+            },
+            ensure_ascii=False,
+        ),
+    }
+
+
 class ProviderHandler(BaseHTTPRequestHandler):
     """OpenAI-compatible request handler."""
 
@@ -232,6 +318,97 @@ class ProviderHandler(BaseHTTPRequestHandler):
         else:
             messages = _normalize_messages(payload.get("messages", []))
 
+        tool_name = _pick_tool_name(payload)
+        user_text = _latest_user_text(messages)
+        force_tool_call = _should_force_bridge_tool_call(user_text, tool_name)
+
+        if force_tool_call and self.path == "/v1/chat/completions":
+            tool_args = _build_bridge_tool_args(user_text)
+            if stream:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Connection", "close")
+                self.end_headers()
+
+                chunk = {
+                    "id": "chatcmpl-local-001",
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": str(payload.get("model") or self.state.model_name),
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "id": "call_xdp_bridge_1",
+                                        "type": "function",
+                                        "function": {
+                                            "name": tool_name,
+                                            "arguments": json.dumps(tool_args, ensure_ascii=False),
+                                        },
+                                    }
+                                ]
+                            },
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+                self.wfile.write(f"data: {json.dumps(chunk, ensure_ascii=False)}\\n\\n".encode("utf-8"))
+
+                done_chunk = {
+                    "id": "chatcmpl-local-001",
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": str(payload.get("model") or self.state.model_name),
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
+                }
+                self.wfile.write(f"data: {json.dumps(done_chunk, ensure_ascii=False)}\\n\\n".encode("utf-8"))
+                self.wfile.write(b"data: [DONE]\\n\\n")
+                self.wfile.flush()
+                self.close_connection = True
+                LOGGER.info("POST %s stream -> 200 forced_tool_call tool=%s", self.path, tool_name)
+                return
+
+            _json_response(
+                self,
+                200,
+                {
+                    "id": "chatcmpl-local-001",
+                    "object": "chat.completion",
+                    "created": int(time.time()),
+                    "model": str(payload.get("model") or self.state.model_name),
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": "call_xdp_bridge_1",
+                                        "type": "function",
+                                        "function": {
+                                            "name": tool_name,
+                                            "arguments": json.dumps(tool_args, ensure_ascii=False),
+                                        },
+                                    }
+                                ],
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                        "total_tokens": 0,
+                    },
+                },
+            )
+            LOGGER.info("POST %s -> 200 forced_tool_call tool=%s", self.path, tool_name)
+            return
+
         try:
             infer_start_ts = time.time()
             output = self.state.generate_chat(
@@ -251,7 +428,7 @@ class ProviderHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache")
-            self.send_header("Connection", "keep-alive")
+            self.send_header("Connection", "close")
             self.end_headers()
 
             role_chunk = {
@@ -291,6 +468,7 @@ class ProviderHandler(BaseHTTPRequestHandler):
             self.wfile.write(f"data: {json.dumps(done_chunk, ensure_ascii=False)}\\n\\n".encode("utf-8"))
             self.wfile.write(b"data: [DONE]\\n\\n")
             self.wfile.flush()
+            self.close_connection = True
             LOGGER.info(
                 "POST %s stream -> 200 prompt=%s completion=%s requested=%s applied=%s cap_hit=%s infer=%.1fms total=%.1fms",
                 self.path,
@@ -308,7 +486,7 @@ class ProviderHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache")
-            self.send_header("Connection", "keep-alive")
+            self.send_header("Connection", "close")
             self.end_headers()
 
             for piece in _split_text_chunks(output["text"]):
@@ -318,6 +496,7 @@ class ProviderHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"data: {\"type\":\"response.completed\"}\\n\\n")
             self.wfile.write(b"data: [DONE]\\n\\n")
             self.wfile.flush()
+            self.close_connection = True
             LOGGER.info(
                 "POST %s stream -> 200 prompt=%s completion=%s requested=%s applied=%s cap_hit=%s infer=%.1fms total=%.1fms",
                 self.path,

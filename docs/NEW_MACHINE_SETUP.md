@@ -92,3 +92,33 @@ cd ~/demo/Agent && conda run -n ttt python skills/xdp-agent-bridge/scripts/call_
 ```bash
 bash scripts/bootstrap_new_machine.sh
 ```
+
+该脚本在 clone OpenClaw 后会自动处理 `3rd_party/openclaw-fixes.patch`：
+
+1. 先执行 `git apply --check` 验证 patch 与当前上游代码兼容。
+2. 验证通过后再执行 `git apply` 正式打 patch。
+3. 任一步失败都会终止脚本，并提示：`上游代码已变更，需更新 patch`。
+
+当 OpenClaw 目录已存在且你希望仍执行同样流程时：
+
+```bash
+APPLY_OPENCLAW_PATCH_ALWAYS=1 bash scripts/bootstrap_new_machine.sh
+```
+
+若 patch 已经应用，脚本会自动识别并跳过。
+
+## patch 说明（用途 / 失效 / 重建）
+
+- patch 文件：`3rd_party/openclaw-fixes.patch`
+- 用途：补齐 OpenClaw 在边界退出路径中的 lifecycle 终态上报，避免 `agent.wait` 黑盒等待超时。
+- 失效条件：OpenClaw 上游代码结构变化、文件上下文漂移、基线版本不一致。
+
+重建方式（在 OpenClaw 仓库执行）：
+
+```bash
+cd /path/to/openclaw
+git --no-pager diff -- src/agents/pi-embedded-runner/run/attempt.ts \
+  > /path/to/oc_xdp/3rd_party/openclaw-fixes.patch
+```
+
+重建时应只保留核心逻辑修复，不要带入临时 debug 代码（如 `print/console.log/调试注释`）。

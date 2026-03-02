@@ -13,16 +13,47 @@ DEMO_DIR="$(cd "$ROOT_DIR/.." && pwd)"
 OPENCLAW_DIR="${OPENCLAW_DIR:-$DEMO_DIR/openclaw}"
 ENV_NAME="${ENV_NAME:-xagent}"
 THIRD_PARTY_DIR="$ROOT_DIR/3rd_party"
+OPENCLAW_PATCH_FILE="$THIRD_PARTY_DIR/openclaw-fixes.patch"
 OPENCLAW_WORKSPACE="$ROOT_DIR/.openclaw"  # 配置隔离目录
+APPLY_OPENCLAW_PATCH_ALWAYS="${APPLY_OPENCLAW_PATCH_ALWAYS:-0}"
 
 if ! command -v conda >/dev/null 2>&1; then
   echo "[ERROR] conda not found. Please install Miniforge/Conda first."
   exit 1
 fi
 
+apply_openclaw_patch() {
+  if [[ ! -f "$OPENCLAW_PATCH_FILE" ]]; then
+    echo "[ERROR] patch file not found: $OPENCLAW_PATCH_FILE"
+    exit 1
+  fi
+
+  echo "[INFO] Validate OpenClaw patch compatibility (--check)"
+  if (cd "$OPENCLAW_DIR" && git apply --check "$OPENCLAW_PATCH_FILE"); then
+    echo "[INFO] Apply OpenClaw patch"
+    if ! (cd "$OPENCLAW_DIR" && git apply "$OPENCLAW_PATCH_FILE"); then
+      echo "[ERROR] 上游代码已变更，需更新 patch"
+      exit 1
+    fi
+    return 0
+  fi
+
+  if (cd "$OPENCLAW_DIR" && git apply --reverse --check "$OPENCLAW_PATCH_FILE"); then
+    echo "[INFO] OpenClaw patch already applied, skip"
+    return 0
+  fi
+
+  echo "[ERROR] 上游代码已变更，需更新 patch"
+  exit 1
+}
+
 if [[ ! -d "$OPENCLAW_DIR" ]]; then
   echo "[INFO] openclaw repo not found, cloning into: $OPENCLAW_DIR"
   git clone https://github.com/openclaw/openclaw.git  "$OPENCLAW_DIR"
+  apply_openclaw_patch
+elif [[ "$APPLY_OPENCLAW_PATCH_ALWAYS" == "1" ]]; then
+  echo "[INFO] APPLY_OPENCLAW_PATCH_ALWAYS=1, validate/apply patch on existing OpenClaw repo"
+  apply_openclaw_patch
 fi
 
 # [0/6] 检查并删除已存在的环境
